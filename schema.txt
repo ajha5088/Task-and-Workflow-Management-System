@@ -1,0 +1,215 @@
+users collection
+
+{
+  "_id": ObjectId("..."),
+  "username": "john_doe",
+  "email": "john@example.com",
+  "password": "hashed_password",
+  "created_at": ISODate("2024-06-21T00:00:00Z"),
+  "updated_at": ISODate("2024-06-21T00:00:00Z"),
+  "accessible_tasks": [
+    {
+      "task_id": ObjectId("..."),
+      "role": "manager"
+    },
+    {
+      "task_id": ObjectId("..."),
+      "role": "user"
+    }
+  ]
+}
+
+tasks collection
+{
+  "_id": ObjectId("..."),
+  "title": "Task 1",
+  "description": "This is task 1",
+  "status": "To Do",
+  "due_date": ISODate("2024-07-01T00:00:00Z"),
+  "created_at": ISODate("2024-06-21T00:00:00Z"),
+  "updated_at": ISODate("2024-06-21T00:00:00Z"),
+  "assigned_users": [ObjectId("..."), ObjectId("...")],
+  "subtask_ids": [ObjectId("..."), ObjectId("...")],  // References to subtasks
+  "dependencies": [ObjectId("...")],
+  "version_history": [
+    {
+      "version": 1,
+      "title": "Initial title",
+      "description": "Initial description",
+      "status": "To Do",
+      "due_date": ISODate("2024-07-01T00:00:00Z"),
+      "updated_at": ISODate("2024-06-20T00:00:00Z")
+    }
+  ]
+}
+
+subtasks collection
+
+{
+  "_id": ObjectId("..."),
+  "parent_task_id": ObjectId("..."),  // Reference to parent task
+  "parent_subtask_id": ObjectId("..."),  // Reference to parent subtask, if any
+  "title": "Subtask 1",
+  "description": "This is subtask 1",
+  "status": "In Progress",
+  "due_date": ISODate("2024-06-25T00:00:00Z"),
+  "created_at": ISODate("2024-06-21T00:00:00Z"),
+  "updated_at": ISODate("2024-06-21T00:00:00Z"),
+  "assigned_users": [ObjectId("..."), ObjectId("...")],
+  "subtask_ids": [ObjectId("..."), ObjectId("...")],  // Nested subtasks
+  "dependencies": [ObjectId("...")],
+  "version_history": [
+    {
+      "version": 1,
+      "title": "Initial title",
+      "description": "Initial description",
+      "status": "To Do",
+      "due_date": ISODate("2024-06-25T00:00:00Z"),
+      "updated_at": ISODate("2024-06-20T00:00:00Z")
+    }
+  ]
+}
+
+
+Point 2
+
+Implementing JWT-based authentication with refresh tokens and Role-Based Access Control (RBAC) involves several steps. Let's design the JWT payload structure, consider security best practices, and outline the implementation steps.
+
+JWT Payload Structure
+The JWT payload will include essential user information and roles to support RBAC. Here’s a suggested structure:
+
+json
+Copy code
+{
+  "sub": "user_id",  // Subject (user ID)
+  "username": "john_doe",
+  "email": "john@example.com",
+  "roles": ["admin", "project_manager"],  // Array of roles
+  "iat": 1598772679,  // Issued at (timestamp)
+  "exp": 1598776279   // Expiration time (timestamp)
+}
+Security Best Practices
+Use Strong Keys: Ensure that the secret key used to sign the JWT is strong and securely stored.
+Short Expiry Times for Access Tokens: Keep access tokens short-lived (e.g., 15 minutes) to reduce the impact of token theft.
+Refresh Tokens: Use refresh tokens with longer expiration times to allow for re-issuance of access tokens without re-authentication.
+Store Refresh Tokens Securely: Store refresh tokens securely (e.g., HttpOnly cookies) to prevent XSS attacks.
+Role Management: Validate and sanitize role assignments to prevent privilege escalation.
+Token Revocation: Implement a mechanism to revoke tokens if needed (e.g., on logout or password change).
+Implementation Steps
+1. Generate JWT Tokens
+Access Token: Short-lived token for accessing resources.
+Refresh Token: Long-lived token for obtaining new access tokens.
+2. Middleware for Token Verification
+Create middleware to verify the JWT and extract user information.
+
+3. Role-Based Authorization Middleware
+Create middleware to check user roles and permissions.
+
+Example Implementation
+Generate Tokens
+javascript
+Copy code
+const jwt = require('jsonwebtoken');
+
+const generateAccessToken = (user) => {
+  return jwt.sign(
+    {
+      sub: user._id,
+      username: user.username,
+      email: user.email,
+      roles: user.roles
+    },
+    process.env.ACCESS_TOKEN_SECRET,
+    { expiresIn: '15m' }
+  );
+};
+
+const generateRefreshToken = (user) => {
+  return jwt.sign(
+    {
+      sub: user._id,
+    },
+    process.env.REFRESH_TOKEN_SECRET,
+    { expiresIn: '7d' }
+  );
+};
+Verify Tokens Middleware
+javascript
+Copy code
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (token == null) return res.sendStatus(401);
+
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+};
+Role-Based Authorization Middleware
+javascript
+Copy code
+const authorizeRoles = (...allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.user || !req.user.roles) {
+      return res.sendStatus(403);
+    }
+
+    const hasRole = req.user.roles.some(role => allowedRoles.includes(role));
+    if (!hasRole) {
+      return res.sendStatus(403);
+    }
+
+    next();
+  };
+};
+Routes with Authentication and Authorization
+javascript
+Copy code
+app.post('/login', (req, res) => {
+  // Authenticate user
+  const user = authenticateUser(req.body.username, req.body.password);
+  if (!user) return res.sendStatus(401);
+
+  const accessToken = generateAccessToken(user);
+  const refreshToken = generateRefreshToken(user);
+
+  // Store refresh token in DB or secure storage
+  saveRefreshToken(user._id, refreshToken);
+
+  res.json({ accessToken, refreshToken });
+});
+
+app.post('/token', (req, res) => {
+  const refreshToken = req.body.token;
+  if (!refreshToken) return res.sendStatus(401);
+
+  // Validate refresh token
+  const user = validateRefreshToken(refreshToken);
+  if (!user) return res.sendStatus(403);
+
+  const accessToken = generateAccessToken(user);
+  res.json({ accessToken });
+});
+
+app.get('/tasks', authenticateToken, authorizeRoles('admin', 'project_manager', 'team_lead', 'team_member'), (req, res) => {
+  // Fetch tasks accessible by the user
+  const tasks = getTasksForUser(req.user);
+  res.json(tasks);
+});
+
+app.post('/tasks', authenticateToken, authorizeRoles('admin', 'project_manager'), (req, res) => {
+  // Create a new task
+  const task = createTask(req.body);
+  res.status(201).json(task);
+});
+Explanation
+Token Generation: generateAccessToken creates a short-lived JWT for accessing resources. generateRefreshToken creates a long-lived JWT for refreshing the access token.
+Token Verification Middleware: authenticateToken verifies the JWT and extracts user information. This middleware is applied to protected routes.
+Role-Based Authorization Middleware: authorizeRoles checks if the user has any of the allowed roles to access the route. This middleware ensures that only users with appropriate roles can access certain routes.
+Routes: Example routes show how to use the authentication and authorization middleware to protect endpoints.
+This implementation ensures that only authenticated users with the appropriate roles can access or modify tasks and subtasks, following the principles of JWT-based authentication and RBAC.
+
+
